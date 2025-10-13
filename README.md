@@ -1,36 +1,93 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+pnpm installndpoints
 
-## Getting Started
+### Authentication
+- `POST /api/auth/[...nextauth]` - NextAuth endpoints
+- `POST /api/register` - User registration
 
-First, run the development server:
+### Patients
+- `GET /api/patients` - List patients (with search/pagination)
+- `POST /api/patients` - Create new patient
+- `GET /api/patients/[id]` - Get patient details
+- `PUT /api/patients/[id]` - Update patient
+- `DELETE /api/patients/[id]` - Delete patient
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+### Services
+- `GET /api/services` - List services (with filtering)
+- `POST /api/services` - Create new service
+- `PUT /api/services/[id]` - Update service
+- `DELETE /api/services/[id]` - Delete service
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Appointments
+- `GET /api/appointments` - List appointments (with date filtering)
+- `POST /api/appointments` - Create new appointment
+- `PUT /api/appointments/[id]` - Update appointment
+- `DELETE /api/appointments/[id]` - Delete appointment
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 🗄️ Database Schema
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Core Models
+- **User** - System users with authentication
+- **Clinic** - Medical clinics (multi-tenant)
+- **Membership** - User-clinic relationships with roles
 
-## Learn More
+### Medical Models
+- **Patient** - Patient records with medical information
+- **Service** - Clinic services with pricing
+- **Appointment** - Scheduled appointments with status tracking
+- **MedicalRecord** - Patient medical history
 
-To learn more about Next.js, take a look at the following resources:
+### Auth Models (NextAuth)
+- **Account** - OAuth account information
+- **Session** - User sessions
+- **VerificationToken** - Email verification tokens
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 🔒 Security Features
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- **Password Hashing** - bcryptjs for secure password storage
+- **Route Protection** - Middleware-based authentication
+- **Multi-tenant Isolation** - Clinic data separation
+- **Input Validation** - Zod schema validation
+- **CSRF Protection** - Built-in NextAuth protection
 
-## Deploy on Vercel
+## 🚀 Deployment
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### Environment Setup
+1. Set up PostgreSQL database
+2. Configure environment variables
+3. Run database migrations
+4. Build and deploy the application
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### Recommended Platforms
+- **Vercel** - Seamless Next.js deployment
+- **Railway** - Full-stack deployment with PostgreSQL
+- **DigitalOcean** - VPS deployment option
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## 📝 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- Built with [Next.js](https://nextjs.org/)
+- UI components from [shadcn/ui](https://ui.shadcn.com/)
+- Database management with [Prisma](https://prisma.io/)
+- Authentication with [NextAuth.js](https://next-auth.js.org/)
+
+## 📞 Support
+
+For support and questions:
+- Create an issue in the GitHub repository
+- Check the documentation in the `/docs` folder
+- Review the API documentation above
+
+---
+
+**MedFlow** - Streamlining medical clinic management with modern technology. 🏥✨
