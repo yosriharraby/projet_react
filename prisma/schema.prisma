@@ -1,9 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
   output   = "../src/generated/prisma"
@@ -14,65 +8,44 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// --- Multi-tenant core models + Auth.js compatible tables ---
-
 model User {
-  id            String   @id @default(cuid())
-  email         String   @unique
-  name          String?
-  image         String?
-  passwordHash  String?
-  // Soft delete flag for safety
-  deletedAt     DateTime?
-
-  // Auth.js relations
-  accounts      Account[]
-  sessions      Session[]
-
-  // Tenancy via memberships (user can belong to many clinics with roles)
-  memberships   Membership[]
-
-  // Back-relation for clinics owned by this user
-  ownedClinics  Clinic[]  @relation("OwnerClinics")
-
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id           String       @id @default(cuid())
+  email        String       @unique
+  name         String?
+  image        String?
+  passwordHash String?
+  deletedAt    DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  accounts     Account[]
+  ownedClinics Clinic[]     @relation("OwnerClinics")
+  memberships  Membership[]
+  sessions     Session[]
 }
 
 model Clinic {
-  id          String        @id @default(cuid())
+  id          String       @id @default(cuid())
   name        String
   address     String?
   phone       String?
-  // Optional owner user id for quick access; full roles in Membership
   ownerId     String?
-  owner       User?         @relation("OwnerClinics", fields: [ownerId], references: [id])
-
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  owner       User?        @relation("OwnerClinics", fields: [ownerId], references: [id])
   memberships Membership[]
-
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
-}
-
-enum Role {
-  ADMIN
-  DOCTOR
-  RECEPTIONIST
 }
 
 model Membership {
-  id        String  @id @default(cuid())
-  userId    String
-  clinicId  String
-  role      Role
-
-  user      User    @relation(fields: [userId], references: [id])
-  clinic    Clinic  @relation(fields: [clinicId], references: [id])
+  id       String @id @default(cuid())
+  userId   String
+  clinicId String
+  role     Role
+  clinic   Clinic @relation(fields: [clinicId], references: [id])
+  user     User   @relation(fields: [userId], references: [id])
 
   @@unique([userId, clinicId])
 }
 
-// --- Auth.js (NextAuth) standard models with Prisma Adapter ---
 model Account {
   id                String  @id @default(cuid())
   userId            String
@@ -86,8 +59,7 @@ model Account {
   scope             String?
   id_token          String? @map("id_token")
   session_state     String? @map("session_state")
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
 }
@@ -97,8 +69,7 @@ model Session {
   sessionToken String   @unique
   userId       String
   expires      DateTime
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model VerificationToken {
@@ -107,4 +78,10 @@ model VerificationToken {
   expires    DateTime
 
   @@unique([identifier, token])
+}
+
+enum Role {
+  ADMIN
+  DOCTOR
+  RECEPTIONIST
 }
