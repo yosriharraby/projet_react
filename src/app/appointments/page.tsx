@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Calendar, Clock, User, Stethoscope } from "lucide-react";
+import { Plus, Calendar, Clock, User, Stethoscope, FileText } from "lucide-react";
+import Link from "next/link";
 
 interface Appointment {
   id: string;
@@ -48,37 +49,120 @@ export default function AppointmentsPage() {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split("T")[0]);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
 
   const fetchData = async () => {
     try {
       setLoading(true);
+      setError(null);
       
       // Fetch appointments for selected date
       const appointmentsResponse = await fetch(`/api/appointments?date=${selectedDate}`);
+      let appointmentsError: string | null = null;
+      
       if (appointmentsResponse.ok) {
         const appointmentsData = await appointmentsResponse.json();
-        setAppointments(appointmentsData.appointments);
+        setAppointments(appointmentsData.appointments || []);
+      } else {
+        // Try to get error details from response
+        try {
+          const errorData = await appointmentsResponse.json();
+          appointmentsError = errorData.error || errorData.details || null;
+          
+          // Handle specific error cases
+          if (appointmentsResponse.status === 404 && errorData.error === "No clinic found") {
+            appointmentsError = "NO_CLINIC";
+          } else if (appointmentsResponse.status === 401) {
+            appointmentsError = "Vous devez être connecté pour voir les rendez-vous. Veuillez vous reconnecter.";
+          } else if (appointmentsResponse.status === 403) {
+            appointmentsError = "Vous n'avez pas la permission de voir les rendez-vous.";
+          } else if (appointmentsResponse.status === 500) {
+            appointmentsError = "Erreur serveur. Veuillez réessayer plus tard.";
+          }
+        } catch (e) {
+          if (appointmentsResponse.status === 401) {
+            appointmentsError = "Vous devez être connecté pour voir les rendez-vous.";
+          } else if (appointmentsResponse.status === 404) {
+            appointmentsError = "NO_CLINIC";
+          }
+        }
+        setAppointments([]); // Set empty array on error
       }
 
       // Fetch patients and services for the form
+      // Récupérer tous les patients (sans pagination) pour le formulaire
       const [patientsResponse, servicesResponse] = await Promise.all([
-        fetch("/api/patients"),
+        fetch("/api/patients?limit=1000"), // Limite élevée pour récupérer tous les patients
         fetch("/api/services?activeOnly=true"),
       ]);
 
+      let patientsError: string | null = null;
+      let servicesError: string | null = null;
+
       if (patientsResponse.ok) {
         const patientsData = await patientsResponse.json();
-        setPatients(patientsData.patients);
+        console.log("[Appointments] Patients loaded:", patientsData.patients?.length || 0, "out of", patientsData.pagination?.total || 0);
+        setPatients(patientsData.patients || []);
+        
+        if (patientsData.patients?.length === 0) {
+          console.warn("[Appointments] Aucun patient trouvé pour cette clinique");
+        }
+      } else {
+        try {
+          const errorData = await patientsResponse.json();
+          if (patientsResponse.status === 404 && errorData.error === "No clinic found") {
+            patientsError = "NO_CLINIC";
+          }
+        } catch (e) {
+          if (patientsResponse.status === 404) {
+            patientsError = "NO_CLINIC";
+          }
+        }
+        setPatients([]);
       }
 
       if (servicesResponse.ok) {
         const servicesData = await servicesResponse.json();
-        setServices(servicesData.services);
+        console.log("[Appointments] Services loaded:", servicesData.services?.length || 0);
+        setServices(servicesData.services || []);
+        
+        if (servicesData.services?.length === 0) {
+          console.warn("[Appointments] Aucun service trouvé pour cette clinique");
+        }
+      } else {
+        try {
+          const errorData = await servicesResponse.json();
+          if (servicesResponse.status === 404 && errorData.error === "No clinic found") {
+            servicesError = "NO_CLINIC";
+          }
+        } catch (e) {
+          if (servicesResponse.status === 404) {
+            servicesError = "NO_CLINIC";
+          }
+        }
+        setServices([]);
       }
-    } catch (error) {
-      console.error("Error fetching data:", error);
+
+      // Determine the main error message
+      // If all errors are "NO_CLINIC", show a unified message
+      if (appointmentsError === "NO_CLINIC" || patientsError === "NO_CLINIC" || servicesError === "NO_CLINIC") {
+        setError("NO_CLINIC");
+      } else if (appointmentsError) {
+        setError(appointmentsError);
+      } else if (patientsError && patientsError !== "NO_CLINIC") {
+        setError(patientsError);
+      } else if (servicesError && servicesError !== "NO_CLINIC") {
+        setError(servicesError);
+      }
+    } catch (error: any) {
+      console.error("[Appointments] Error fetching data:", error);
+      const errorMessage = error.message || "Une erreur s'est produite lors du chargement des données. Vérifiez votre connexion et réessayez.";
+      setError(errorMessage);
+      setAppointments([]);
+      setPatients([]);
+      setServices([]);
     } finally {
       setLoading(false);
     }
@@ -87,6 +171,48 @@ export default function AppointmentsPage() {
   useEffect(() => {
     fetchData();
   }, [selectedDate]);
+
+  // Recharger les patients et services quand le modal s'ouvre
+  useEffect(() => {
+    if (isAddDialogOpen) {
+      // Recharger les patients et services à chaque ouverture du modal pour s'assurer qu'ils sont à jour
+      const loadData = async () => {
+        try {
+          const [patientsResponse, servicesResponse] = await Promise.all([
+            fetch("/api/patients?limit=1000"),
+            fetch("/api/services?activeOnly=true"),
+          ]);
+
+          if (patientsResponse.ok) {
+            const patientsData = await patientsResponse.json();
+            console.log("[Appointments] Patients reloaded on modal open:", patientsData.patients?.length || 0);
+            setPatients(patientsData.patients || []);
+          } else {
+            // Silently handle error - don't spam console with redundant errors
+            if (patientsResponse.status !== 404) {
+              console.error("[Appointments] Error reloading patients:", patientsResponse.status);
+            }
+            setPatients([]);
+          }
+
+          if (servicesResponse.ok) {
+            const servicesData = await servicesResponse.json();
+            console.log("[Appointments] Services reloaded on modal open:", servicesData.services?.length || 0);
+            setServices(servicesData.services || []);
+          } else {
+            // Silently handle error - don't spam console with redundant errors
+            if (servicesResponse.status !== 404) {
+              console.error("[Appointments] Error reloading services:", servicesResponse.status);
+            }
+            setServices([]);
+          }
+        } catch (error) {
+          console.error("[Appointments] Error reloading data:", error);
+        }
+      };
+      loadData();
+    }
+  }, [isAddDialogOpen]);
 
   const formatTime = (dateString: string) => {
     return new Date(dateString).toLocaleTimeString("en-US", {
@@ -116,29 +242,30 @@ export default function AppointmentsPage() {
 
   const updateAppointmentStatus = async (appointmentId: string, newStatus: string) => {
     try {
+      console.log("[Appointments] Updating appointment:", appointmentId, "to status:", newStatus);
+      
       const response = await fetch(`/api/appointments/${appointmentId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: newStatus }),
       });
 
-      if (!response.ok) throw new Error("Failed to update appointment");
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        const errorMessage = errorData.error || errorData.details || "Failed to update appointment";
+        console.error("[Appointments] Error updating appointment:", response.status, errorMessage);
+        throw new Error(errorMessage);
+      }
+      
+      const data = await response.json();
+      console.log("[Appointments] Appointment updated successfully:", data.appointment);
       
       fetchData(); // Refresh the data
-    } catch (error) {
-      console.error("Error updating appointment:", error);
+    } catch (error: any) {
+      console.error("[Appointments] Error updating appointment:", error);
+      // Vous pourriez ajouter une notification toast ici pour informer l'utilisateur
+      alert(`Erreur lors de la mise à jour: ${error.message || "Erreur inconnue"}`);
     }
-  };
-
-  const generateTimeSlots = () => {
-    const slots = [];
-    for (let hour = 8; hour < 18; hour++) {
-      for (let minute = 0; minute < 60; minute += 30) {
-        const time = `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
-        slots.push(time);
-      }
-    }
-    return slots;
   };
 
   return (
@@ -199,9 +326,63 @@ export default function AppointmentsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
+          {error === "NO_CLINIC" && (
+            <div className="mb-4 p-4 bg-yellow-50 dark:bg-yellow-950/20 border border-yellow-200 dark:border-yellow-800 rounded-md">
+              <p className="text-yellow-800 dark:text-yellow-200 font-medium mb-2">
+                ⚠️ Aucune clinique trouvée
+              </p>
+              <p className="text-yellow-700 dark:text-yellow-300 text-sm mb-3">
+                Vous devez être membre d'une clinique pour accéder aux rendez-vous. 
+                Si vous êtes un ADMIN, créez une clinique ou ajoutez-vous à une clinique existante.
+                Si vous êtes un RÉCEPTIONNISTE ou un MÉDECIN, demandez à l'administrateur de vous ajouter au staff.
+              </p>
+              <div className="flex gap-2">
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={() => window.location.href = "/admin/clinic"}
+                >
+                  Configuration Clinique
+                </Button>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={() => window.location.href = "/admin/staff"}
+                >
+                  Gestion du Staff
+                </Button>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={() => fetchData()}
+                >
+                  Réessayer
+                </Button>
+              </div>
+            </div>
+          )}
+          {error && error !== "NO_CLINIC" && (
+            <div className="mb-4 p-4 bg-destructive/10 border border-destructive/20 rounded-md">
+              <p className="text-destructive font-medium">{error}</p>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="mt-2"
+                onClick={() => fetchData()}
+              >
+                Réessayer
+              </Button>
+            </div>
+          )}
           {loading ? (
             <div className="text-center py-8">
               <p>Loading appointments...</p>
+            </div>
+          ) : error && error !== "NO_CLINIC" ? (
+            <div className="text-center py-8">
+              <p className="text-muted-foreground">
+                Impossible de charger les rendez-vous. Veuillez réessayer.
+              </p>
             </div>
           ) : appointments.length === 0 ? (
             <div className="text-center py-8">
@@ -304,6 +485,14 @@ export default function AppointmentsPage() {
                           Complete
                         </Button>
                       )}
+                      {appointment.status === "COMPLETED" && (
+                        <Link href={`/appointments/${appointment.id}/prescription`}>
+                          <Button size="sm" variant="outline">
+                            <FileText className="h-4 w-4 mr-2" />
+                            Créer Ordonnance
+                          </Button>
+                        </Link>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -336,6 +525,17 @@ function ScheduleAppointmentForm({
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const generateTimeSlots = () => {
+    const slots = [];
+    for (let hour = 8; hour < 18; hour++) {
+      for (let minute = 0; minute < 60; minute += 30) {
+        const time = `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
+        slots.push(time);
+      }
+    }
+    return slots;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -377,14 +577,36 @@ function ScheduleAppointmentForm({
           className="w-full px-3 py-2 border rounded-md"
           required
           aria-label="Select patient"
+          disabled={patients.length === 0}
         >
-          <option value="">Select a patient</option>
+          <option value="">
+            {patients.length === 0 
+              ? "Aucun patient disponible. Créez un patient d'abord." 
+              : "Sélectionner un patient"}
+          </option>
           {patients.map((patient) => (
             <option key={patient.id} value={patient.id}>
               {patient.firstName} {patient.lastName}
+              {patient.email ? ` (${patient.email})` : ''}
+              {patient.phone ? ` - ${patient.phone}` : ''}
             </option>
           ))}
         </select>
+        {patients.length === 0 && (
+          <div className="mt-2 p-3 bg-yellow-50 dark:bg-yellow-950/20 border border-yellow-200 dark:border-yellow-800 rounded-md">
+            <p className="text-sm text-yellow-800 dark:text-yellow-200">
+              ⚠️ Aucun patient n'a été créé pour cette clinique.
+            </p>
+            <p className="text-sm text-yellow-700 dark:text-yellow-300 mt-1">
+              Veuillez créer un patient sur la page <strong>/patients</strong> avant de créer un rendez-vous.
+            </p>
+          </div>
+        )}
+        {patients.length > 0 && (
+          <p className="text-sm text-muted-foreground mt-1">
+            {patients.length} patient{patients.length > 1 ? 's' : ''} disponible{patients.length > 1 ? 's' : ''}
+          </p>
+        )}
       </div>
 
       <div>
@@ -395,14 +617,35 @@ function ScheduleAppointmentForm({
           className="w-full px-3 py-2 border rounded-md"
           required
           aria-label="Select service"
+          disabled={services.length === 0}
         >
-          <option value="">Select a service</option>
+          <option value="">
+            {services.length === 0 
+              ? "Aucun service disponible. L'admin doit créer des services d'abord." 
+              : "Sélectionner un service"}
+          </option>
           {services.map((service) => (
             <option key={service.id} value={service.id}>
-              {service.name} (${service.price}, {service.duration}min)
+              {service.name} - {service.price.toFixed(2)}€ ({service.duration}min)
+              {service.category ? ` - ${service.category}` : ''}
             </option>
           ))}
         </select>
+        {services.length === 0 && (
+          <div className="mt-2 p-3 bg-yellow-50 dark:bg-yellow-950/20 border border-yellow-200 dark:border-yellow-800 rounded-md">
+            <p className="text-sm text-yellow-800 dark:text-yellow-200">
+              ⚠️ Aucun service n'a été créé pour cette clinique.
+            </p>
+            <p className="text-sm text-yellow-700 dark:text-yellow-300 mt-1">
+              Veuillez demander à l'administrateur de créer des services sur la page <strong>/services</strong>.
+            </p>
+          </div>
+        )}
+        {services.length > 0 && (
+          <p className="text-sm text-muted-foreground mt-1">
+            {services.length} service{services.length > 1 ? 's' : ''} disponible{services.length > 1 ? 's' : ''}
+          </p>
+        )}
       </div>
 
       <div>

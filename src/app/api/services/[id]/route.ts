@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { requireAuthAndMembership, requirePermission } from "@/lib/role-check";
 
 const updateServiceSchema = z.object({
   name: z.string().min(1, "Service name is required").optional(),
@@ -18,19 +17,16 @@ export async function PUT(
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = await getServerSession(authOptions as any);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const authResult = await requireAuthAndMembership();
+    if ("error" in authResult) {
+      return authResult.error;
     }
 
-    // Get user's clinic
-    const membership = await prisma.membership.findFirst({
-      where: { userId: session.user.id },
-      include: { clinic: true },
-    });
+    const { clinic, userId } = authResult;
 
-    if (!membership) {
-      return NextResponse.json({ error: "No clinic found" }, { status: 404 });
+    const permissionError = await requirePermission(userId, clinic.id, "MANAGE_SERVICES");
+    if (permissionError) {
+      return permissionError;
     }
 
     const json = await req.json();
@@ -45,7 +41,7 @@ export async function PUT(
     const existingService = await prisma.service.findFirst({
       where: {
         id: params.id,
-        clinicId: membership.clinicId,
+        clinicId: clinic.id,
       },
     });
 
@@ -78,26 +74,23 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = await getServerSession(authOptions as any);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const authResult = await requireAuthAndMembership();
+    if ("error" in authResult) {
+      return authResult.error;
     }
 
-    // Get user's clinic
-    const membership = await prisma.membership.findFirst({
-      where: { userId: session.user.id },
-      include: { clinic: true },
-    });
+    const { clinic, userId } = authResult;
 
-    if (!membership) {
-      return NextResponse.json({ error: "No clinic found" }, { status: 404 });
+    const permissionError = await requirePermission(userId, clinic.id, "MANAGE_SERVICES");
+    if (permissionError) {
+      return permissionError;
     }
 
     // Check if service exists and belongs to user's clinic
     const existingService = await prisma.service.findFirst({
       where: {
         id: params.id,
-        clinicId: membership.clinicId,
+        clinicId: clinic.id,
       },
     });
 
@@ -112,11 +105,11 @@ export async function DELETE(
 
     if (appointmentCount > 0) {
       // Instead of deleting, deactivate the service
-      const service = await prisma.service.update({
+      await prisma.service.update({
         where: { id: params.id },
         data: { isActive: false },
       });
-      return NextResponse.json({ service, message: "Service deactivated due to existing appointments" });
+      return NextResponse.json({ success: true, message: "Service deactivated due to existing appointments" });
     }
 
     await prisma.service.delete({

@@ -14,6 +14,7 @@ model User {
   name         String?
   image        String?
   passwordHash String?
+  defaultRole  Role?        // Rôle choisi à l'inscription (pour redirection)
   deletedAt    DateTime?
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
@@ -25,6 +26,7 @@ model User {
   // Medical relations
   assignedAppointments Appointment[]
   medicalRecords MedicalRecord[]
+  prescriptions Prescription[] @relation("UserPrescriptions")
 }
 
 model Clinic {
@@ -41,6 +43,7 @@ model Clinic {
   services    Service[]
   appointments Appointment[]
   medicalRecords MedicalRecord[]
+  prescriptions Prescription[] @relation("ClinicPrescriptions")
 }
 
 model Membership {
@@ -112,6 +115,7 @@ model Patient {
   // Relations
   appointments Appointment[]
   medicalRecords MedicalRecord[]
+  prescriptions Prescription[] @relation("PatientPrescriptions")
   
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -196,6 +200,29 @@ model MedicalRecord {
   @@index([patientId, date])
 }
 
+model Prescription {
+  id            String   @id @default(cuid())
+  appointmentId String?
+  patientId     String
+  patient       Patient  @relation("PatientPrescriptions", fields: [patientId], references: [id], onDelete: Cascade)
+  clinicId      String
+  clinic        Clinic   @relation("ClinicPrescriptions", fields: [clinicId], references: [id], onDelete: Cascade)
+  createdById   String
+  createdBy     User     @relation("UserPrescriptions", fields: [createdById], references: [id])
+  
+  diagnosis     String   // Diagnostic médical
+  medications   String   // Liste des médicaments (format texte ou JSON)
+  instructions  String?  // Instructions pour le patient
+  notes         String?
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  @@index([patientId])
+  @@index([clinicId])
+  @@index([appointmentId])
+}
+
 enum AppointmentStatus {
   SCHEDULED
   CONFIRMED
@@ -209,4 +236,5 @@ enum Role {
   ADMIN
   DOCTOR
   RECEPTIONIST
+  PATIENT
 }

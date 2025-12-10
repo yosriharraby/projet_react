@@ -39,10 +39,12 @@ export default function PatientsPage() {
   const [totalPages, setTotalPages] = useState(1);
   const [totalPatients, setTotalPatients] = useState(0);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchPatients = async () => {
     try {
       setLoading(true);
+      setError(null);
       const params = new URLSearchParams({
         page: page.toString(),
         limit: "10",
@@ -50,14 +52,54 @@ export default function PatientsPage() {
       });
 
       const response = await fetch(`/api/patients?${params}`);
-      if (!response.ok) throw new Error("Failed to fetch patients");
+      
+      if (!response.ok) {
+        // Try to get error details from response
+        let errorMessage = "Failed to fetch patients";
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.error || errorData.details || errorMessage;
+          console.error("[fetchPatients] Error response:", errorData);
+          
+          // Handle specific error cases
+          if (response.status === 401) {
+            errorMessage = "Vous devez être connecté pour voir les patients. Veuillez vous reconnecter.";
+          } else if (response.status === 404) {
+            errorMessage = "Aucune clinique trouvée. Contactez l'administrateur.";
+          } else if (response.status === 403) {
+            errorMessage = "Vous n'avez pas la permission de voir les patients.";
+          }
+        } catch (e) {
+          console.error("[fetchPatients] Failed to parse error response");
+          if (response.status === 401) {
+            errorMessage = "Vous devez être connecté pour voir les patients.";
+          } else if (response.status === 500) {
+            errorMessage = "Erreur serveur. Veuillez réessayer plus tard.";
+          }
+        }
+        setError(errorMessage);
+        setPatients([]);
+        setTotalPages(1);
+        setTotalPatients(0);
+        return;
+      }
       
       const data: PatientsResponse = await response.json();
-      setPatients(data.patients);
-      setTotalPages(data.pagination.pages);
-      setTotalPatients(data.pagination.total);
-    } catch (error) {
-      console.error("Error fetching patients:", error);
+      setPatients(data.patients || []);
+      setTotalPages(data.pagination?.pages || 1);
+      setTotalPatients(data.pagination?.total || 0);
+      setError(null); // Clear any previous errors
+    } catch (error: any) {
+      console.error("[fetchPatients] Error fetching patients:", error);
+      console.error("[fetchPatients] Error message:", error.message);
+      console.error("[fetchPatients] Error stack:", error.stack);
+      
+      // Set user-friendly error message
+      const errorMessage = error.message || "Une erreur s'est produite lors du chargement des patients. Vérifiez votre connexion et réessayez.";
+      setError(errorMessage);
+      setPatients([]);
+      setTotalPages(1);
+      setTotalPatients(0);
     } finally {
       setLoading(false);
     }
@@ -139,9 +181,28 @@ export default function PatientsPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
+          {error && (
+            <div className="mb-4 p-4 bg-destructive/10 border border-destructive/20 rounded-md">
+              <p className="text-destructive font-medium">{error}</p>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="mt-2"
+                onClick={() => fetchPatients()}
+              >
+                Réessayer
+              </Button>
+            </div>
+          )}
           {loading ? (
             <div className="text-center py-8">
               <p>Loading patients...</p>
+            </div>
+          ) : error ? (
+            <div className="text-center py-8">
+              <p className="text-muted-foreground">
+                Impossible de charger les patients. Veuillez réessayer.
+              </p>
             </div>
           ) : patients.length === 0 ? (
             <div className="text-center py-8">
@@ -188,16 +249,10 @@ export default function PatientsPage() {
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
                           <Link href={`/patients/${patient.id}`}>
-                            <Button variant="outline" size="sm">
+                            <Button variant="outline" size="sm" title="Voir détails">
                               <Eye className="h-4 w-4" />
                             </Button>
                           </Link>
-                          <Button variant="outline" size="sm">
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button variant="outline" size="sm">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -268,13 +323,31 @@ function AddPatientForm({ onSuccess }: { onSuccess: () => void }) {
       const data = await response.json();
 
       if (!response.ok) {
-        setError(data.error || "Failed to create patient");
+        // Use the error message from the API or a fallback
+        const errorMessage = data.error || data.details || "Échec de la création du patient";
+        setError(errorMessage);
+        console.error("[AddPatientForm] Error creating patient:", data);
         return;
       }
 
+      // Success - reset form and call onSuccess
+      setFormData({
+        firstName: "",
+        lastName: "",
+        email: "",
+        phone: "",
+        dateOfBirth: "",
+        gender: "",
+        address: "",
+        bloodType: "",
+        allergies: "",
+        medications: "",
+        notes: "",
+      });
       onSuccess();
-    } catch (err) {
-      setError("Network error. Please try again.");
+    } catch (err: any) {
+      console.error("[AddPatientForm] Network error:", err);
+      setError("Erreur réseau. Vérifiez votre connexion et réessayez.");
     } finally {
       setLoading(false);
     }
@@ -354,7 +427,16 @@ function AddPatientForm({ onSuccess }: { onSuccess: () => void }) {
         />
       </div>
 
-      {error && <p className="text-red-600 text-sm">{error}</p>}
+      {error && (
+        <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md">
+          <p className="text-destructive text-sm font-medium">{error}</p>
+          {error.includes("clinique") && (
+            <p className="text-muted-foreground text-xs mt-2">
+              💡 Astuce : Si vous êtes un ADMIN, assurez-vous d'avoir créé une clinique et d'y être membre.
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="flex justify-end gap-2">
         <Button type="submit" disabled={loading}>

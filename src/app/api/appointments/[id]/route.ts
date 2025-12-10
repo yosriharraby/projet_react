@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { requireAuthAndMembership, requirePermission } from "@/lib/role-check";
 
 const updateAppointmentSchema = z.object({
   date: z.string().optional(),
@@ -14,37 +13,42 @@ const updateAppointmentSchema = z.object({
 
 export async function PUT(
   req: Request,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getServerSession(authOptions as any);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const params = await context.params;
+    const appointmentId = params.id;
+
+    const authResult = await requireAuthAndMembership();
+    if ("error" in authResult) {
+      console.error("[PUT /api/appointments/[id]] Auth error:", authResult.error);
+      return authResult.error;
     }
 
-    // Get user's clinic
-    const membership = await prisma.membership.findFirst({
-      where: { userId: session.user.id },
-      include: { clinic: true },
-    });
+    const { clinic, userId, role } = authResult;
+    console.log("[PUT /api/appointments/[id]] Updating appointment:", appointmentId, "for clinic:", clinic.id);
 
-    if (!membership) {
-      return NextResponse.json({ error: "No clinic found" }, { status: 404 });
+    const permissionError = await requirePermission(userId, clinic.id, "MANAGE_APPOINTMENTS");
+    if (permissionError) {
+      console.error("[PUT /api/appointments/[id]] Permission error");
+      return permissionError;
     }
 
     const json = await req.json();
     const parsed = updateAppointmentSchema.safeParse(json);
     if (!parsed.success) {
+      console.error("[PUT /api/appointments/[id]] Validation error:", parsed.error.errors);
       return NextResponse.json({ error: "Invalid data", details: parsed.error.errors }, { status: 400 });
     }
 
     const data = parsed.data;
+    console.log("[PUT /api/appointments/[id]] Update data:", data);
 
     // Check if appointment exists and belongs to user's clinic
     const existingAppointment = await prisma.appointment.findFirst({
       where: {
-        id: params.id,
-        clinicId: membership.clinicId,
+        id: appointmentId,
+        clinicId: clinic.id, // Correction: utiliser clinic.id au lieu de membership.clinicId
       },
       include: {
         service: true,
@@ -52,6 +56,7 @@ export async function PUT(
     });
 
     if (!existingAppointment) {
+      console.error("[PUT /api/appointments/[id]] Appointment not found:", appointmentId);
       return NextResponse.json({ error: "Appointment not found" }, { status: 404 });
     }
 
@@ -59,6 +64,7 @@ export async function PUT(
     
     if (data.status !== undefined) {
       updateData.status = data.status;
+      console.log("[PUT /api/appointments/[id]] Updating status to:", data.status);
     }
     
     if (data.notes !== undefined) {
@@ -76,7 +82,7 @@ export async function PUT(
       // Check for conflicts if date/time is being changed
       const conflict = await prisma.appointment.findFirst({
         where: {
-          clinicId: membership.clinicId,
+          clinicId: clinic.id,
           date: {
             gte: newDate,
             lt: new Date(newDate.getTime() + existingAppointment.service.duration * 60000),
@@ -84,11 +90,12 @@ export async function PUT(
           status: {
             notIn: ["CANCELLED", "NO_SHOW"],
           },
-          id: { not: params.id }, // Exclude current appointment
+          id: { not: appointmentId }, // Exclude current appointment
         },
       });
 
       if (conflict) {
+        console.error("[PUT /api/appointments/[id]] Time slot conflict detected");
         return NextResponse.json({ error: "Time slot is already booked" }, { status: 409 });
       }
 
@@ -96,7 +103,7 @@ export async function PUT(
     }
 
     const appointment = await prisma.appointment.update({
-      where: { id: params.id },
+      where: { id: appointmentId },
       data: updateData,
       include: {
         patient: true,
@@ -105,39 +112,54 @@ export async function PUT(
       },
     });
 
+    console.log("[PUT /api/appointments/[id]] Appointment updated successfully");
     return NextResponse.json({ appointment });
-  } catch (error) {
-    console.error("Error updating appointment:", error);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
+  } catch (error: any) {
+    console.error("[PUT /api/appointments/[id]] Error:", error);
+    console.error("[PUT /api/appointments/[id]] Error message:", error.message);
+    console.error("[PUT /api/appointments/[id]] Error stack:", error.stack);
+    return NextResponse.json(
+      { 
+        error: "Server error",
+        details: process.env.NODE_ENV === "development" ? error.message : undefined
+      },
+      { status: 500 }
+    );
   }
 }
 
 export async function DELETE(
   req: Request,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getServerSession(authOptions as any);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const params = await context.params;
+    const appointmentId = params.id;
+
+    const authResult = await requireAuthAndMembership();
+    if ("error" in authResult) {
+      return authResult.error;
     }
 
-    // Get user's clinic
-    const membership = await prisma.membership.findFirst({
-      where: { userId: session.user.id },
-      include: { clinic: true },
-    });
+    const { clinic, userId, role } = authResult;
 
-    if (!membership) {
-      return NextResponse.json({ error: "No clinic found" }, { status: 404 });
+    const permissionError = await requirePermission(userId, clinic.id, "MANAGE_APPOINTMENTS");
+    if (permissionError) {
+      return permissionError;
     }
 
     // Check if appointment exists and belongs to user's clinic
+    const whereClause: any = {
+      id: appointmentId,
+      clinicId: clinic.id,
+    };
+
+    if (role === "DOCTOR") {
+      whereClause.assignedUserId = userId;
+    }
+
     const existingAppointment = await prisma.appointment.findFirst({
-      where: {
-        id: params.id,
-        clinicId: membership.clinicId,
-      },
+      where: whereClause,
     });
 
     if (!existingAppointment) {
@@ -145,7 +167,7 @@ export async function DELETE(
     }
 
     await prisma.appointment.delete({
-      where: { id: params.id },
+      where: { id: appointmentId },
     });
 
     return NextResponse.json({ success: true });

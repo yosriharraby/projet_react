@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { requireAuthAndMembership, requirePermission } from "@/lib/role-check";
 
 const createServiceSchema = z.object({
   name: z.string().min(1, "Service name is required"),
@@ -15,19 +14,18 @@ const createServiceSchema = z.object({
 
 export async function POST(req: Request) {
   try {
-    const session = await getServerSession(authOptions as any);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // Vérifier authentification et membership
+    const authResult = await requireAuthAndMembership();
+    if ("error" in authResult) {
+      return authResult.error;
     }
 
-    // Get user's clinic
-    const membership = await prisma.membership.findFirst({
-      where: { userId: session.user.id },
-      include: { clinic: true },
-    });
+    const { clinic, userId } = authResult;
 
-    if (!membership) {
-      return NextResponse.json({ error: "No clinic found" }, { status: 404 });
+    // Vérifier permission: Seul ADMIN peut créer des services
+    const permissionError = await requirePermission(userId, clinic.id, "MANAGE_SERVICES");
+    if (permissionError) {
+      return permissionError;
     }
 
     const json = await req.json();
@@ -46,7 +44,7 @@ export async function POST(req: Request) {
         price: data.price,
         category: data.category || null,
         isActive: data.isActive,
-        clinicId: membership.clinicId,
+        clinicId: clinic.id,
       },
     });
 
@@ -59,30 +57,27 @@ export async function POST(req: Request) {
 
 export async function GET(req: Request) {
   try {
-    const session = await getServerSession(authOptions as any);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // Vérifier authentification et membership
+    const authResult = await requireAuthAndMembership();
+    if ("error" in authResult) {
+      console.error("[GET /api/services] Auth error:", authResult.error);
+      return authResult.error;
     }
 
-    // Get user's clinic
-    const membership = await prisma.membership.findFirst({
-      where: { userId: session.user.id },
-      include: { clinic: true },
-    });
-
-    if (!membership) {
-      return NextResponse.json({ error: "No clinic found" }, { status: 404 });
-    }
+    const { clinic } = authResult;
+    console.log("[GET /api/services] Fetching services for clinic:", clinic.id);
 
     const { searchParams } = new URL(req.url);
     const category = searchParams.get("category");
     const activeOnly = searchParams.get("activeOnly") === "true";
 
     const where = {
-      clinicId: membership.clinicId,
+      clinicId: clinic.id,
       ...(category && { category }),
       ...(activeOnly && { isActive: true }),
     };
+
+    console.log("[GET /api/services] Where clause:", where);
 
     const services = await prisma.service.findMany({
       where,
@@ -92,9 +87,19 @@ export async function GET(req: Request) {
       ],
     });
 
+    console.log("[GET /api/services] Services found:", services.length);
+
     return NextResponse.json({ services });
-  } catch (error) {
-    console.error("Error fetching services:", error);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
+  } catch (error: any) {
+    console.error("[GET /api/services] Error:", error);
+    console.error("[GET /api/services] Error message:", error.message);
+    console.error("[GET /api/services] Error stack:", error.stack);
+    return NextResponse.json(
+      { 
+        error: "Server error",
+        details: process.env.NODE_ENV === "development" ? error.message : undefined
+      },
+      { status: 500 }
+    );
   }
 }

@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { requireAuthAndMembership, requirePermission } from "@/lib/role-check";
 
 const updatePatientSchema = z.object({
   firstName: z.string().min(1, "First name is required").optional(),
@@ -23,38 +22,34 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = await getServerSession(authOptions as any);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // Vérifier authentification et membership
+    const authResult = await requireAuthAndMembership();
+    if ("error" in authResult) {
+      return authResult.error;
     }
 
-    // Get user's clinic
-    const membership = await prisma.membership.findFirst({
-      where: { userId: session.user.id },
-      include: { clinic: true },
-    });
-
-    if (!membership) {
-      return NextResponse.json({ error: "No clinic found" }, { status: 404 });
-    }
+    const { clinic } = authResult;
 
     const patient = await prisma.patient.findFirst({
       where: {
         id: params.id,
-        clinicId: membership.clinicId,
+        clinicId: clinic.id,
       },
       include: {
         appointments: {
           include: {
             service: true,
+            assignedUser: true,
           },
           orderBy: { date: "desc" },
-          take: 5,
         },
         medicalRecords: {
+          include: {
+            createdBy: true,
+          },
           orderBy: { date: "desc" },
-          take: 5,
         },
+        clinic: true,
       },
     });
 
@@ -74,19 +69,18 @@ export async function PUT(
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = await getServerSession(authOptions as any);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // Vérifier authentification et membership
+    const authResult = await requireAuthAndMembership();
+    if ("error" in authResult) {
+      return authResult.error;
     }
 
-    // Get user's clinic
-    const membership = await prisma.membership.findFirst({
-      where: { userId: session.user.id },
-      include: { clinic: true },
-    });
+    const { clinic, userId } = authResult;
 
-    if (!membership) {
-      return NextResponse.json({ error: "No clinic found" }, { status: 404 });
+    // Vérifier permission: Seuls ADMIN et RECEPTIONIST peuvent modifier les patients
+    const permissionError = await requirePermission(userId, clinic.id, "MANAGE_PATIENTS");
+    if (permissionError) {
+      return permissionError;
     }
 
     const json = await req.json();
@@ -101,7 +95,7 @@ export async function PUT(
     const existingPatient = await prisma.patient.findFirst({
       where: {
         id: params.id,
-        clinicId: membership.clinicId,
+        clinicId: clinic.id,
       },
     });
 
@@ -113,7 +107,7 @@ export async function PUT(
     if (data.email && data.email.trim() && data.email !== existingPatient.email) {
       const emailExists = await prisma.patient.findFirst({
         where: {
-          clinicId: membership.clinicId,
+          clinicId: clinic.id,
           email: data.email,
           id: { not: params.id },
         },
@@ -154,26 +148,25 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = await getServerSession(authOptions as any);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    // Vérifier authentification et membership
+    const authResult = await requireAuthAndMembership();
+    if ("error" in authResult) {
+      return authResult.error;
     }
 
-    // Get user's clinic
-    const membership = await prisma.membership.findFirst({
-      where: { userId: session.user.id },
-      include: { clinic: true },
-    });
+    const { clinic, userId } = authResult;
 
-    if (!membership) {
-      return NextResponse.json({ error: "No clinic found" }, { status: 404 });
+    // Vérifier permission: Seuls ADMIN et RECEPTIONIST peuvent supprimer les patients
+    const permissionError = await requirePermission(userId, clinic.id, "MANAGE_PATIENTS");
+    if (permissionError) {
+      return permissionError;
     }
 
     // Check if patient exists and belongs to user's clinic
     const existingPatient = await prisma.patient.findFirst({
       where: {
         id: params.id,
-        clinicId: membership.clinicId,
+        clinicId: clinic.id,
       },
     });
 
